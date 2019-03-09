@@ -414,13 +414,14 @@ cleanup:
 }
 
 void *search_file_worker(void *i) {
-    work_queue_t *queue_item;
+    char *work_path = NULL;
     int worker_id = *(int *)i;
 
     log_debug("Worker %i started", worker_id);
     while (TRUE) {
         pthread_mutex_lock(&work_queue_mtx);
-        while (work_queue == NULL) {
+        while (VECTOR_SIZE(&work_queue.pathes) == 0 ||
+                work_queue.offset == VECTOR_SIZE(&work_queue.pathes)) {
             if (done_adding_files) {
                 pthread_mutex_unlock(&work_queue_mtx);
                 log_debug("Worker %i finished.", worker_id);
@@ -428,16 +429,13 @@ void *search_file_worker(void *i) {
             }
             pthread_cond_wait(&files_ready, &work_queue_mtx);
         }
-        queue_item = work_queue;
-        work_queue = work_queue->next;
-        if (work_queue == NULL) {
-            work_queue_tail = NULL;
-        }
+        work_path = (char *)vector_get(&work_queue.pathes,
+                    work_queue.offset++);
         pthread_mutex_unlock(&work_queue_mtx);
 
-        search_file(queue_item->path);
-        free(queue_item->path);
-        free(queue_item);
+        search_file(work_path);
+        free(work_path);
+        work_path = NULL;
     }
 }
 
@@ -570,10 +568,8 @@ void search_dir(ignores *ig, const char *base_path, const char *path, const int 
 
     int offset_vector[3];
     int rc = 0;
-    work_queue_t *queue_item;
 
     for (i = 0; i < results; i++) {
-        queue_item = NULL;
         dir = dir_list[i];
         ag_asprintf(&dir_full_path, "%s/%s", path, dir->d_name);
 #ifndef _WIN32
@@ -613,18 +609,8 @@ void search_dir(ignores *ig, const char *base_path, const char *path, const int 
                 }
             }
 
-            queue_item = ag_malloc(sizeof(work_queue_t));
-            queue_item->path = dir_full_path;
-            queue_item->next = NULL;
-            pthread_mutex_lock(&work_queue_mtx);
-            if (work_queue_tail == NULL) {
-                work_queue = queue_item;
-            } else {
-                work_queue_tail->next = queue_item;
-            }
-            work_queue_tail = queue_item;
+            vector_append(&work_queue.pathes, dir_full_path);
             pthread_cond_signal(&files_ready);
-            pthread_mutex_unlock(&work_queue_mtx);
             log_debug("%s added to work queue", dir_full_path);
         } else if (opts.recurse_dirs) {
             if (depth < opts.max_search_depth || opts.max_search_depth == -1) {
@@ -637,6 +623,8 @@ void search_dir(ignores *ig, const char *base_path, const char *path, const int 
 #endif
                 search_dir(child_ig, base_path, dir_full_path, depth + 1,
                            original_dev);
+                free(dir_full_path);
+                dir_full_path = NULL;
                 cleanup_ignore(child_ig);
             } else {
                 if (opts.max_search_depth == DEFAULT_MAX_SEARCH_DEPTH) {
@@ -655,10 +643,6 @@ void search_dir(ignores *ig, const char *base_path, const char *path, const int 
     cleanup:
         free(dir);
         dir = NULL;
-        if (queue_item == NULL) {
-            free(dir_full_path);
-            dir_full_path = NULL;
-        }
     }
 
 search_dir_cleanup:

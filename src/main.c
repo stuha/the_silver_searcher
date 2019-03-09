@@ -51,8 +51,6 @@ int main(int argc, char **argv) {
 
     set_log_level(LOG_LEVEL_WARN);
 
-    work_queue = NULL;
-    work_queue_tail = NULL;
     root_ignores = init_ignore(NULL, "", 0);
     out_fd = stdout;
 
@@ -62,6 +60,9 @@ int main(int argc, char **argv) {
         memset(&stats, 0, sizeof(stats));
         gettimeofday(&(stats.time_start), NULL);
     }
+
+    work_queue.offset = 0;
+    vector_init(&work_queue.pathes);
 
 #ifdef USE_PCRE_JIT
     int has_jit = 0;
